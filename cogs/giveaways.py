@@ -35,6 +35,7 @@ class Giveaways(commands.Cog):
     @commands.command(aliases=["gstart"])
     @commands.has_permissions(manage_guild=True)
     async def giveaway(self, ctx):
+        await ctx.message.delete()
         init = await ctx.send(embed=discord.Embed(
             title="🎉 New Giveaway ! 🎉",
             description="Please answer the following questions to finalize the creation of the Giveaway",
