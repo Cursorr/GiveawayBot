@@ -3,6 +3,7 @@ import json
 import asyncio
 import datetime
 import time
+import random
 
 from discord.ext import commands, tasks
 
@@ -26,16 +27,65 @@ def convert(date):
         return val * time_dic[unit], i[unit]
 
 
+async def stop_giveaway(self, g_id, data):
+    channel = self.bot.get_channel(data["channel_id"])
+    giveaway_message = await channel.fetch_message(int(g_id))
+    users = await giveaway_message.reactions[0].users().flatten()
+    users.pop(users.index(self.bot.user))
+    if len(users) < data["winners"]:
+        winners_number = len(users)
+    else:
+        winners_number = data["winners"]
+
+    winners = random.sample(users, winners_number)
+    users_mention = []
+    for user in winners:
+        users_mention.append(user.mention)
+    result_embed = discord.Embed(
+        title="🎉 {} 🎉".format(data["prize"]),
+        color=self.color,
+        description="Congratulations {} you won the giveaway !".format(", ".join(users_mention))
+    ) \
+        .set_footer(icon_url=self.bot.user.avatar_url, text="Giveaway Ended !")
+    await giveaway_message.edit(embed=result_embed)
+    ghost_ping = await channel.send(", ".join(users_mention))
+    await ghost_ping.delete()
+    giveaways = json.load(open("cogs/giveaways.json", "r"))
+    del giveaways[g_id]
+    json.dump(giveaways, open("cogs/giveaways.json", "w"), indent=4)
+
+
+
 class Giveaways(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.config = json.load(open("config.json", "r"))
         self.color = int(self.config["color"], 16) + 0x200
+        self.giveaway_task.start()
 
-    @commands.command(aliases=["gstart"])
+    def cog_unload(self):
+        self.giveaway_task.cancel()
+
+    @tasks.loop(seconds=5)
+    async def giveaway_task(self):
+        await self.bot.wait_until_ready()
+        giveaways = json.load(open("cogs/giveaways.json", "r"))
+
+        if len(giveaways) == 0:
+            return
+
+        for giveaway in giveaways:
+            data = giveaways[giveaway]
+            if int(time.time()) > data["end_time"]:
+                await stop_giveaway(self, giveaway, data)
+
+
+    @commands.command(
+        name="giveaway",
+        aliases=["gstart"]
+    )
     @commands.has_permissions(manage_guild=True)
-    async def giveaway(self, ctx):
-        await ctx.message.delete()
+    async def giveaway(self, ctx: commands.Context):
         init = await ctx.send(embed=discord.Embed(
             title="🎉 New Giveaway ! 🎉",
             description="Please answer the following questions to finalize the creation of the Giveaway",
@@ -116,20 +166,47 @@ class Giveaways(commands.Cog):
         giveaway_message = await channel.send(embed=giveaway_embed)
         await giveaway_message.add_reaction("🎉")
         now = int(time.time())
-        with open("cogs/giveaways.json", "r") as f:
-            giveaways = json.load(f)
+        giveaways = json.load(open("cogs/giveaways.json", "r"))
+        data = {
+            "prize": prize,
+            "host": ctx.author.id,
+            "winners": winners,
+            "end_time": now + converted_time[0],
+            "channel_id": channel.id
+        }
+        giveaways[str(giveaway_message.id)] = data
+        json.dump(giveaways, open("cogs/giveaways.json", "w"), indent=4)
 
-            data = {
-                "prize": prize,
-                "host": ctx.author.id,
-                "winners": winners,
-                "end_time": now + converted_time[0],
-                "channel_id": channel.id
-            }
-            giveaways[str(giveaway_message.id)] = data
+    @commands.command(
+        name="gstop",
+        aliases=["stop"],
+        usage="{giveaway_id}"
+    )
+    @commands.has_permissions(manage_guild=True)
+    async def gstop(self, ctx: commands.Context, message_id):
+        await ctx.message.delete()
+        giveaways = json.load(open("cogs/giveaways.json", "r"))
+        if not message_id in giveaways.keys(): return await ctx.send(
+            embed=discord.Embed(title="Error",
+                                description="This giveaway ID is not found.",
+                                color=self.color))
+        await stop_giveaway(self, message_id, giveaways[message_id])
 
-        with open("cogs/giveaways.json", "w") as f:
-            json.dump(giveaways, f, indent=4)
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx: commands.Context, error):
+        if isinstance(error, (commands.CommandNotFound, discord.HTTPException)):
+            return
+
+        if isinstance(error, commands.MissingPermissions):
+            return await ctx.send(embed=discord.Embed(
+                title="Error",
+                description="You don't have the permission to use this command.",
+                color=self.color))
+        if isinstance(error, commands.MissingRequiredArgument):
+            return await ctx.send(embed=discord.Embed(
+                title="Error",
+                description=f"You forgot to provide an argument, please do it like: `{ctx.command.name} {ctx.command.usage}`",
+                color=self.color))
 
 
 def setup(bot):
