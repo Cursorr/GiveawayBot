@@ -4,8 +4,7 @@ import json
 from discord.ext import commands, tasks
 
 EXTENTIONS = [
-    "cogs.giveaways",
-    "cogs.giveaway_task"
+    "cogs.giveaways"
 ]
 
 
